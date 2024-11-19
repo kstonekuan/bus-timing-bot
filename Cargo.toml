@@ -8,10 +8,6 @@ description = "A Cloudflare worker for serving static sites"
 [package.metadata.release]
 release = false
 
-# https://github.com/rustwasm/wasm-pack/issues/1247
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
-
 [lib]
 crate-type = ["cdylib"]
 
