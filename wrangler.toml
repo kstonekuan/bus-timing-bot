@@ -1,6 +1,9 @@
 name = "athena"
 main = "build/worker/shim.mjs"
 compatibility_date = "2024-11-17"
+kv_namespaces = [
+    { binding = "bus_stops", id = "23988189a17948c69c1dbe9be69870a4", preview_id = "a31258f3af874314911abcf9f2597ae1" },
+]
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
