@@ -134,17 +134,17 @@ fn get_telegram_message_with_request_button(chat_id: i64, text: &str) -> Telegra
 // Claude: Function to fetch bus timings from LTA API
 async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec<BusTiming>> {
     // Claude: Prepare headers for LTA API request
-    let mut headers = Headers::new();
-    headers.set("AccountKey", lta_api_key)?;
-    headers.set("accept", "application/json")?;
-
-    // Claude: Construct full URL for bus stop
-    let url = format!("{}?BusStopCode={}", LTA_API_URL, bus_stop_code);
-    let req = Request::new_with_init(&url, RequestInit::new().with_headers(headers))?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}?BusStopCode={}", LTA_API_URL, bus_stop_code))
+        .header("AccountKey", lta_api_key)
+        .header("accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Claude: Fetch bus arrival data
-    let mut resp = Fetch::Request(req).send().await?;
-    let data: BusArrivalResponse = resp.json().await?;
+    let data: BusArrivalResponse = resp.json().await.map_err(|e| e.to_string())?;
 
     console_log!("LTA API response: {:#?}", data);
 

@@ -18,6 +18,7 @@ crate-type = ["cdylib"]
 [dependencies]
 chrono = { version = "0.4.38", features = ["wasm-bindgen"] }
 console_error_panic_hook = { version = "0.1.7" }
+reqwest = { version = "0.12.9", features = ["json"] }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
 worker = { version = "0.4.2" }
