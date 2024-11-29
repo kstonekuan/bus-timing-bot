@@ -7,9 +7,8 @@ const LTA_API_URL: &str = "http://datamall2.mytransport.sg/ltaodataservice/BusAr
 
 // Claude: Structs for parsing Telegram webhook updates
 #[derive(Deserialize, Debug)]
-struct TelegramUpdate {
-    message: Option<Message>,
-    callback_query: Option<CallbackQuery>,
+struct Chat {
+    id: i64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -25,8 +24,9 @@ struct CallbackQuery {
 }
 
 #[derive(Deserialize, Debug)]
-struct Chat {
-    id: i64,
+struct TelegramUpdate {
+    message: Option<Message>,
+    callback_query: Option<CallbackQuery>,
 }
 
 // Claude: Structs for parsing LTA bus arrival API response
@@ -52,31 +52,31 @@ struct BusArrival {
 }
 
 // Claude: Structs for creating Telegram bot messages and buttons
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Debug)]
 struct TelegramButton {
     text: String,
     callback_data: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct ReplyMarkup {
     inline_keyboard: Vec<Vec<TelegramButton>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 enum TelegramMessageParseMode {
     MarkdownV2,
     // Add other parse modes as needed
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 enum TelegramMessageMethod {
     SendMessage,
     // Add other methods as needed
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct TelegramMessage {
     method: TelegramMessageMethod,
     chat_id: i64,
@@ -146,7 +146,7 @@ async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec
     // Claude: Fetch bus arrival data
     let data: BusArrivalResponse = resp.json().await.map_err(|e| e.to_string())?;
 
-    console_log!("LTA API response: {:#?}", data);
+    console_debug!("LTA API response: {:#?}", data);
 
     // Claude: Get current timestamp for time calculations
     let now = Utc::now().timestamp();
@@ -195,7 +195,7 @@ async fn handle_request(
     // Claude: Parse incoming webhook request body
     let update: TelegramUpdate = req.json().await?;
 
-    console_log!("Received update: {:#?}", update);
+    console_log!("Incoming Request: {:#?}", update);
 
     // Claude: Extract chat ID from either callback query or message
     let chat_id = if let Some(callback_query) = &update.callback_query {
@@ -225,6 +225,7 @@ async fn handle_request(
         None => match update.message {
             None => Err("No message found in request".to_string()),
             Some(message) => match message.text.as_deref() {
+                None => Err("No message found in request".to_string()),
                 Some("/start") => {
                     let welcome_message = "Welcome to the Bus Arrival Bot! Click the button below to request bus timings:";
                     Ok(get_telegram_message_with_request_button(
@@ -232,17 +233,18 @@ async fn handle_request(
                         welcome_message,
                     ))
                 }
-
                 Some(text) => Err(format!(
                     "Invalid message, expected \"/start\" but got \"{}\"",
                     text
                 )),
-                None => Err("No message found in request".to_string()),
             },
         },
     }?;
 
-    Response::ok(serde_json::to_string(&telegram_message)?)
+    console_log!("Outgoing Response: {:#?}", telegram_message);
+
+    let resp_body = serde_json::to_string(&telegram_message)?;
+    Response::ok(resp_body)
 }
 
 // Claude: Main event handler for Cloudflare Workers
@@ -263,7 +265,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     handle_request(req, &lta_api_key, &bus_stop_code)
         .await
         .map_err(|e| {
-            console_log!("Error handling request: {}", e);
+            console_error!("Error handling request: {}", e);
             e
         })
 }
