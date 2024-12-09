@@ -1,11 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use strum_macros::Display;
 use worker::*;
 
-// Claude: Define constants for API endpoints and bus stop information
 const LTA_API_URL: &str = "http://datamall2.mytransport.sg/ltaodataservice/BusArrivalv2";
+const TELEGRAM_API_URL: &str = "https://api.telegram.org/bot";
 
-// Claude: Structs for parsing Telegram webhook updates
 #[derive(Deserialize, Debug)]
 struct Chat {
     id: i64,
@@ -29,7 +29,38 @@ struct TelegramUpdate {
     callback_query: Option<CallbackQuery>,
 }
 
-// Claude: Structs for parsing LTA bus arrival API response
+#[derive(Serialize, Deserialize, Debug)]
+struct TelegramButton {
+    text: String,
+    callback_data: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ReplyMarkup {
+    inline_keyboard: Vec<Vec<TelegramButton>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum TelegramMessageParseMode {
+    MarkdownV2,
+    // Add other parse modes as needed
+}
+
+#[derive(Display, Debug)]
+#[strum(serialize_all = "camelCase")]
+enum TelegramMessageMethod {
+    SendMessage,
+    // Add other methods as needed
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TelegramMessage {
+    chat_id: i64,
+    text: String,
+    parse_mode: TelegramMessageParseMode,
+    reply_markup: Option<ReplyMarkup>,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 struct BusArrivalResponse {
@@ -50,42 +81,6 @@ struct BusService {
 struct BusArrival {
     estimated_arrival: Option<String>,
 }
-
-// Claude: Structs for creating Telegram bot messages and buttons
-#[derive(Serialize, Debug)]
-struct TelegramButton {
-    text: String,
-    callback_data: String,
-}
-
-#[derive(Serialize, Debug)]
-struct ReplyMarkup {
-    inline_keyboard: Vec<Vec<TelegramButton>>,
-}
-
-#[derive(Serialize, Debug)]
-enum TelegramMessageParseMode {
-    MarkdownV2,
-    // Add other parse modes as needed
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-enum TelegramMessageMethod {
-    SendMessage,
-    // Add other methods as needed
-}
-
-#[derive(Serialize, Debug)]
-struct TelegramMessage {
-    method: TelegramMessageMethod,
-    chat_id: i64,
-    text: String,
-    parse_mode: TelegramMessageParseMode,
-    reply_markup: Option<ReplyMarkup>,
-}
-
-// Claude: Struct to hold parsed bus timing information
 struct BusTiming {
     service_no: String,
     next_arrival: String,
@@ -93,25 +88,24 @@ struct BusTiming {
     next_arrival_3: String,
 }
 
-// Claude: Helper function to format bus arrival times
-fn format_message(bus_timings: &[BusTiming]) -> String {
-    let mut message = String::from("*Bus Timings:*\n\n");
-
-    for bus in bus_timings {
-        message.push_str(&format!(
-            "*Service No:* {}\n\
+fn format_bus_timings_message(bus_timings: Vec<BusTiming>) -> String {
+    let timings: Vec<String> = bus_timings
+        .into_iter()
+        .map(|bus| {
+            format!(
+                "*Service No:* {}\n\
              *Next Arrival:* {}\n\
              *Next Arrival 2:* {}\n\
              *Next Arrival 3:* {}\n\
-             -----------------------------\n",
-            bus.service_no, bus.next_arrival, bus.next_arrival_2, bus.next_arrival_3
-        ));
-    }
+             \\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\n",
+                bus.service_no, bus.next_arrival, bus.next_arrival_2, bus.next_arrival_3
+            )
+        })
+        .collect();
 
-    message
+    format!("*Bus Timings:*\n\n{}", timings.join("\n"))
 }
 
-// Claude: Function to send messages with inline keyboard buttons to Telegram
 fn get_telegram_message_with_request_button(chat_id: i64, text: &str) -> TelegramMessage {
     // Claude: Create request button for bus timings
     let request_button = TelegramButton {
@@ -121,7 +115,6 @@ fn get_telegram_message_with_request_button(chat_id: i64, text: &str) -> Telegra
 
     // Claude: Prepare Telegram message with optional reply markup (buttons)
     TelegramMessage {
-        method: TelegramMessageMethod::SendMessage,
         chat_id,
         text: text.to_string(),
         parse_mode: TelegramMessageParseMode::MarkdownV2,
@@ -131,7 +124,6 @@ fn get_telegram_message_with_request_button(chat_id: i64, text: &str) -> Telegra
     }
 }
 
-// Claude: Function to fetch bus timings from LTA API
 async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec<BusTiming>> {
     // Claude: Prepare headers for LTA API request
     let client = reqwest::Client::new();
@@ -143,20 +135,16 @@ async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec
         .await
         .map_err(|e| e.to_string())?;
 
-    // Claude: Fetch bus arrival data
-    let data: BusArrivalResponse = resp.json().await.map_err(|e| e.to_string())?;
+    let bus_arrival_resp: BusArrivalResponse = resp.json().await.map_err(|e| e.to_string())?;
 
-    console_debug!("LTA API response: {:#?}", data);
+    console_debug!("LTA API response: {:#?}", bus_arrival_resp);
 
-    // Claude: Get current timestamp for time calculations
     let now = Utc::now().timestamp();
 
-    // Claude: Transform API response into our BusTiming struct
-    let bus_timings = data
+    let bus_timings = bus_arrival_resp
         .services
         .into_iter()
         .map(|service| {
-            // Claude: Helper closure to format arrival times
             let format_arrival = |arrival: &BusArrival| {
                 if let Some(time) = &arrival.estimated_arrival {
                     let arrival_time = DateTime::parse_from_rfc3339(time)
@@ -173,7 +161,6 @@ async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec
                 }
             };
 
-            // Claude: Create BusTiming struct for each bus service
             BusTiming {
                 service_no: service.service_no,
                 next_arrival: format_arrival(&service.next_bus),
@@ -186,18 +173,35 @@ async fn fetch_bus_timings(lta_api_key: &str, bus_stop_code: &str) -> Result<Vec
     Ok(bus_timings)
 }
 
-// Claude: Main request handler for processing Telegram webhook updates
+async fn send_message(
+    telegram_api_key: &str,
+    telegram_message: &TelegramMessage,
+) -> Result<reqwest::Response> {
+    // Claude: Prepare Telegram API request
+    let client = reqwest::Client::new();
+    let method = TelegramMessageMethod::SendMessage.to_string();
+    let telegram_url = format!("{}{}/{}", TELEGRAM_API_URL, telegram_api_key, method);
+    console_debug!("Telegram API URL: {}", telegram_url);
+    client
+        .post(telegram_url)
+        .header("Content-Type", "application/json")
+        .json(telegram_message)
+        .send()
+        .await
+        .map_err(|e| Error::from(e.to_string()))
+}
+
 async fn handle_request(
     mut req: Request,
     lta_api_key: &str,
+    telegram_api_key: &str,
     bus_stop_code: &str,
+    allowed_chat_id: &str,
 ) -> Result<Response> {
-    // Claude: Parse incoming webhook request body
     let update: TelegramUpdate = req.json().await?;
 
     console_log!("Incoming Request: {:#?}", update);
 
-    // Claude: Extract chat ID from either callback query or message
     let chat_id = if let Some(callback_query) = &update.callback_query {
         Ok(callback_query.message.chat.id)
     } else if let Some(message) = &update.message {
@@ -206,15 +210,22 @@ async fn handle_request(
         Err("No chat id found in request")
     }?;
 
-    // Claude: Handle different types of incoming updates
+    // Check if chat ID is allowed
+    let () = if chat_id.to_string() == allowed_chat_id {
+        Ok(())
+    } else {
+        Err(format!("Chat ID {} is not allowed", chat_id))
+    }?;
+
     let telegram_message = match update.callback_query {
         Some(callback_query) => match callback_query.data.as_str() {
             "request_timings" => {
                 // Claude: Fetch and send bus timings when button is pressed
                 let bus_timings = fetch_bus_timings(lta_api_key, bus_stop_code).await?;
-                let message = format_message(&bus_timings);
+                let message = format_bus_timings_message(bus_timings);
 
                 console_log!("Sending message: {}", message);
+
                 Ok(get_telegram_message_with_request_button(chat_id, &message))
             }
             data => Err(format!(
@@ -242,30 +253,42 @@ async fn handle_request(
     }?;
 
     console_log!("Outgoing Response: {:#?}", telegram_message);
+    let resp = send_message(telegram_api_key, &telegram_message).await?;
+    let resp_json = resp.text().await.map_err(|e| e.to_string())?;
+    console_debug!("Telegram API response: {:#?}", resp_json);
 
-    let resp_body = serde_json::to_string(&telegram_message)?;
-    Response::ok(resp_body)
+    Response::ok("OK")
 }
 
-// Claude: Main event handler for Cloudflare Workers
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     console_error_panic_hook::set_once();
 
-    // Claude: Retrieve API keys from environment secrets
     let lta_api_key = env.secret("LTA_API_KEY")?.to_string();
-    let bus_stop_code = env
-        .kv("bus_stops")?
+    let telegram_api_key = env.secret("TELEGRAM_API_KEY")?.to_string();
+    let kv = env.kv("bus_stops")?;
+    let bus_stop_code = kv
         .get("code")
         .text()
         .await?
         .ok_or("No bus stop codes found")?;
+    // TODO: Using another KV namespace for this
+    let allowed_chat_id = kv
+        .get("chat_id")
+        .text()
+        .await?
+        .ok_or("No allowed chat id found")?;
 
-    // Claude: Process the incoming request and handle any errors
-    handle_request(req, &lta_api_key, &bus_stop_code)
-        .await
-        .map_err(|e| {
-            console_error!("Error handling request: {}", e);
-            e
-        })
+    handle_request(
+        req,
+        &lta_api_key,
+        &telegram_api_key,
+        &bus_stop_code,
+        &allowed_chat_id,
+    )
+    .await
+    .map_err(|e| {
+        console_error!("Error handling request: {}", e);
+        e
+    })
 }
